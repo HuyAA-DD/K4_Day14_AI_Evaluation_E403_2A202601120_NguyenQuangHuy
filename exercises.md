@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Một vài câu trả lời sáng tạo hoặc câu hỏi còn thiếu dữ kiện khiến context chưa đủ để kiểm chứng; câu trả lời phải nói rõ giới hạn và không khẳng định quá mức. | Thường xuyên có claim không được hỗ trợ bởi context, đặc biệt với giá, thanh toán, bảo hành, bảo mật hoặc chính sách. | Kiểm tra từng claim và nguồn truy xuất; cải thiện grounding/retrieval. Block release nếu lỗi tạo thông tin sai hoặc liên quan an toàn/chính sách. |
+| Answer Relevance | Câu hỏi mơ hồ hoặc người dùng chỉ hỏi một phần nhỏ nên hệ thống cần hỏi lại để làm rõ. | Câu trả lời lạc đề, không giải quyết intent chính, hoặc buộc người dùng hỏi lại trong các luồng hỗ trợ quan trọng. | Phân tích intent, query rewrite và mẫu thất bại; block nếu mức thấp xảy ra phổ biến trên các intent chính. |
+| Context Recall | Gold answer chứa chi tiết không cần cho câu hỏi hiện tại, hoặc bộ truy xuất nhỏ có chủ ý và câu trả lời vẫn đúng trong phạm vi hẹp. | Context bỏ sót điều kiện, ngoại lệ, thời hạn hoặc bước bắt buộc của chính sách, khiến câu trả lời có thể sai dù phần còn lại đúng. | Bổ sung/chia nhỏ tài liệu, điều chỉnh top-k và kiểm tra coverage theo intent; block với các policy-critical cases. |
+| Context Precision | Có một số chunk nhiễu trong top-k nhưng chunk liên quan vẫn đứng sớm và câu trả lời bám đúng nguồn. | Chunk không liên quan đứng trước hoặc chiếm đa số, làm model dựa vào thông tin sai/lẫn chính sách. | Cải thiện search, metadata filter và reranking; theo dõi precision ở các rank đầu và block nếu retrieval dẫn đến hallucination. |
+| Completeness | Câu hỏi chỉ yêu cầu một phần thông tin, hoặc câu trả lời ngắn nhưng đã nêu rõ phạm vi và hướng dẫn người dùng hỏi tiếp. | Bỏ sót bước thực hiện, điều kiện eligibility, cảnh báo hoặc thông tin cần thiết để người dùng hoàn thành yêu cầu. | So sánh với checklist/gold answer, bổ sung coverage và test edge cases; block nếu thiếu thông tin bắt buộc. |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -48,13 +48,24 @@ Ba bias thường gặp:
 
 > *Câu trả lời:*
 
+Tạo một tập câu hỏi và các cặp answer A/B có chất lượng tương đương (độ đúng, độ dài và format được cân bằng), sau đó giữ nguyên prompt và rubric của judge. Chạy ít nhất hai condition:
+
+1. Condition 1: hiển thị A trước, B sau.
+2. Condition 2: hoán đổi thứ tự, hiển thị B trước, A sau.
+
+Randomize thứ tự trên nhiều câu hỏi và chạy lặp với nhiều seed. Ghi lại winner/score của từng answer ở cả hai condition. Nếu một answer có điểm hoặc xác suất thắng cao hơn đáng kể chỉ vì đứng trước, đó là evidence của position bias. Có thể bổ sung condition không có nhãn A/B và đối chiếu với human labels để loại trừ khác biệt chất lượng thật.
+
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
 
+Thiết kế rubric theo các tiêu chí độc lập, có trọng số và điểm tối đa rõ ràng: correctness, coverage, faithfulness/grounding và khả năng thực hiện yêu cầu. Quy định rằng câu trả lời ngắn nhưng đầy đủ được điểm bằng hoặc cao hơn câu trả lời dài; không chấm độ dài như một proxy cho chất lượng. Chỉ thưởng cho thông tin liên quan, đồng thời trừ điểm cho lan man, lặp ý, claim không cần thiết hoặc không được hỗ trợ. Nên dùng các answer có độ dài khác nhau trong calibration để kiểm tra rubric thực sự length-neutral.
+
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+
+Human labels là mốc chuẩn độc lập để đo agreement, phát hiện judge chấm lệch có hệ thống và hiệu chỉnh mapping từ score sang pass/fail. Calibration cũng cho biết ngưỡng nào tương ứng với chất lượng mà con người chấp nhận, nhất là với lỗi policy hoặc safety mà điểm trung bình có thể che khuất. Sau khi triển khai, dùng một tập human-labeled cố định để theo dõi drift và re-calibrate khi model, prompt hoặc domain thay đổi.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +73,15 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | 0.85 | Đây là hard gate vì claim không grounded có thể tạo thông tin sai về đơn hàng, thanh toán hoặc chính sách. Chỉ cần một critical slice dưới ngưỡng cũng phải block. |
+| Answer Relevance | 0.80 | Bảo đảm hệ thống trả lời đúng intent chính thay vì chỉ chứa các từ khóa liên quan; dưới ngưỡng sẽ làm tăng số lượt hỏi lại và escalation. |
+| Completeness | 0.80 | Đảm bảo không bỏ sót bước, điều kiện và cảnh báo cần thiết để người dùng thực hiện đúng yêu cầu. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+
+Offline evaluation dùng trước mỗi pull request/release trên golden set và regression set: nhanh, lặp lại được, phù hợp để block deployment. Online evaluation dùng sau khi deploy, thường qua canary hoặc A/B, để đo dữ liệu và hành vi người dùng thật như feedback, escalation, latency và drift; nên có rollback guard. Human review dùng cho các case điểm thấp hoặc confidence thấp, câu hỏi mới/ngoài domain, thay đổi policy, và các luồng nhạy cảm như thanh toán, bảo mật, hoàn tiền hoặc khi cần tạo nhãn chuẩn cho calibration. Kết hợp cả ba: offline là gate, online là monitoring, human review là kiểm tra chất lượng sâu và xử lý ngoại lệ.
 
 ---
 
