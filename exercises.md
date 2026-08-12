@@ -46,7 +46,7 @@ Ba bias thường gặp:
 
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
-> *Câu trả lời:*
+> **Đã trả lời:**
 
 Tạo một tập câu hỏi và các cặp answer A/B có chất lượng tương đương (độ đúng, độ dài và format được cân bằng), sau đó giữ nguyên prompt và rubric của judge. Chạy ít nhất hai condition:
 
@@ -57,13 +57,13 @@ Randomize thứ tự trên nhiều câu hỏi và chạy lặp với nhiều see
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
-> *Câu trả lời:*
+> **Đã trả lời:**
 
 Thiết kế rubric theo các tiêu chí độc lập, có trọng số và điểm tối đa rõ ràng: correctness, coverage, faithfulness/grounding và khả năng thực hiện yêu cầu. Quy định rằng câu trả lời ngắn nhưng đầy đủ được điểm bằng hoặc cao hơn câu trả lời dài; không chấm độ dài như một proxy cho chất lượng. Chỉ thưởng cho thông tin liên quan, đồng thời trừ điểm cho lan man, lặp ý, claim không cần thiết hoặc không được hỗ trợ. Nên dùng các answer có độ dài khác nhau trong calibration để kiểm tra rubric thực sự length-neutral.
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
-> *Câu trả lời:*
+> **Đã trả lời:**
 
 Human labels là mốc chuẩn độc lập để đo agreement, phát hiện judge chấm lệch có hệ thống và hiệu chỉnh mapping từ score sang pass/fail. Calibration cũng cho biết ngưỡng nào tương ứng với chất lượng mà con người chấp nhận, nhất là với lỗi policy hoặc safety mà điểm trung bình có thể che khuất. Sau khi triển khai, dùng một tập human-labeled cố định để theo dõi drift và re-calibrate khi model, prompt hoặc domain thay đổi.
 
@@ -79,7 +79,7 @@ Human labels là mốc chuẩn độc lập để đo agreement, phát hiện ju
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
-> *Câu trả lời:*
+> **Đã trả lời:**
 
 Offline evaluation dùng trước mỗi pull request/release trên golden set và regression set: nhanh, lặp lại được, phù hợp để block deployment. Online evaluation dùng sau khi deploy, thường qua canary hoặc A/B, để đo dữ liệu và hành vi người dùng thật như feedback, escalation, latency và drift; nên có rollback guard. Human review dùng cho các case điểm thấp hoặc confidence thấp, câu hỏi mới/ngoài domain, thay đổi policy, và các luồng nhạy cảm như thanh toán, bảo mật, hoàn tiền hoặc khi cần tạo nhãn chuẩn cho calibration. Kết hợp cả ba: offline là gate, online là monitoring, human review là kiểm tra chất lượng sâu và xử lý ngoại lệ.
 
@@ -142,8 +142,8 @@ Kiểm tra:
 pytest tests/ -v
 ```
 
-`rerank_by_overlap()` là TODO bonus của Exercise 3.5. Test tương ứng được skip
-nếu bạn chưa làm bonus.
+`rerank_by_overlap()` đã được implement cho bonus Exercise 3.5; test tương ứng
+đã pass.
 
 ---
 
@@ -277,6 +277,8 @@ verbosity bias và self-preference bằng cách nào?
 
 ### Exercise 3.4 — Framework Comparison (Bonus +10)
 
+> Skipped intentionally in this submission.
+
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
@@ -307,20 +309,20 @@ thay đổi Context Recall hay không.
 
 | ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
 |---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
+| M01 | 0.969 | 0.969 | 0.478 | 1.000 | +0.522 |
+| A01 | 0.880 | 0.880 | 0.804 | 1.000 | +0.196 |
+| H03 | 0.895 | 0.895 | 0.887 | 1.000 | +0.113 |
+| E03 | 0.913 | 0.913 | 0.917 | 1.000 | +0.083 |
+| M03 | 1.000 | 1.000 | 0.950 | 1.000 | +0.050 |
+| **Avg** | **0.931** | **0.931** | **0.807** | **1.000** | **+0.193** |
 
 **Tại sao Recall dự kiến không đổi?**
 
-> *Câu trả lời:*
+> Recall là coverage trên union của retrieved chunks, nên reranking chỉ đổi thứ tự chứ không thêm hoặc xóa chunk. Vì tập chunks không đổi, union tokens không đổi và Context Recall giữ nguyên. Trong thử nghiệm, cả năm cases đều giữ nguyên recall.
 
 **Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
 
-> *Câu trả lời:*
+> Reranking không đủ khi retriever không lấy được evidence cần thiết, query không diễn đạt đúng intent, chunk quá lớn/quá nhỏ hoặc corpus thiếu tài liệu. Khi đó cần sửa retriever/query rewriting/chunking, không chỉ đổi thứ tự các chunks đã lấy. Reranking cũng có thể đưa lexical-overlap noise lên trước nếu query không phản ánh đúng semantic relevance, nên cần kiểm tra bằng gold evidence và human review.
 
 ---
 
@@ -334,11 +336,11 @@ Hoàn thành `reflection.md` bằng kết quả thật từ Exercise 3.2.
 
 Hoàn thành kiểm tra cuối trong khoảng 16:50–17:00.
 
-- [ ] Tất cả required tests pass.
-- [ ] `golden_dataset.json` validate thành công.
-- [ ] Exercise 3.1 hoàn thành trong file JSON và bảng kết quả phía trên.
-- [ ] Exercise 3.2 có năm metrics, aggregate report và ba cases thấp nhất.
-- [ ] Exercise 3.3 có rubric 1–5 và bias controls.
-- [ ] `reflection.md` có ba failure analyses và regression strategy.
-- [ ] Đã copy `template.py` thành `solution/solution.py`.
-- [ ] Exercise 3.4 và 3.5 chỉ làm nếu chọn bonus.
+- [x] Tất cả required tests pass.
+- [x] `golden_dataset.json` validate thành công.
+- [x] Exercise 3.1 hoàn thành trong file JSON và bảng kết quả phía trên.
+- [x] Exercise 3.2 có năm metrics, aggregate report và ba cases thấp nhất.
+- [x] Exercise 3.3 có rubric 1–5 và bias controls.
+- [x] `reflection.md` có ba failure analyses và regression strategy.
+- [x] Đã copy `template.py` thành `solution/solution.py`.
+- [x] Exercise 3.5 bonus đã hoàn thành; Exercise 3.4 được bỏ qua theo yêu cầu.
