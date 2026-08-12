@@ -749,8 +749,12 @@ class FailureAnalyzer:
             dict mapping failure_type → count.
             Example: {"hallucination": 3, "irrelevant": 2, "incomplete": 5}
         """
-        # TODO
-        raise NotImplementedError("Implement categorize_failures")
+        categories: dict[str, int] = {}
+        for failure in failures:
+            if failure.failure_type is None:
+                continue
+            categories[failure.failure_type] = categories.get(failure.failure_type, 0) + 1
+        return categories
 
     def find_root_cause(self, failure: EvalResult) -> str:
         """
@@ -762,8 +766,23 @@ class FailureAnalyzer:
             "Answer is missing key information — increase context window or improve generation"
             "Multiple issues detected — review full pipeline"
         """
-        # TODO: compare faithfulness, relevance, completeness, return appropriate string
-        raise NotImplementedError("Implement find_root_cause")
+        scores = {
+            "faithfulness": failure.faithfulness,
+            "relevance": failure.relevance,
+            "completeness": failure.completeness,
+        }
+        low_scores = [score for score in scores.values() if score < 0.5]
+        if len(low_scores) >= 2:
+            return "Multiple issues detected — review full pipeline"
+
+        lowest_metric = min(scores, key=scores.get)
+        if lowest_metric == "faithfulness":
+            return "Context is missing or irrelevant — improve retrieval"
+        if lowest_metric == "relevance":
+            return "Answer does not address the question — improve prompt clarity"
+        if lowest_metric == "completeness":
+            return "Answer is missing key information — increase context window or improve generation"
+        return "Multiple issues detected — review full pipeline"
 
     def generate_improvement_log(self, failures: list, suggestions: list[str]) -> str:
         """Generate a Markdown table logging failures and improvement actions.
@@ -782,7 +801,29 @@ class FailureAnalyzer:
 
         TODO: Build markdown table with failure details + matched suggestions
         """
-        raise NotImplementedError
+        lines = [
+            "| Failure ID | Type | Root Cause | Suggested Fix | Status |",
+            "|------------|------|------------|---------------|--------|",
+        ]
+
+        def cell(value: Any) -> str:
+            return str(value).replace("|", "\\|").replace("\n", " ")
+
+        for index, failure in enumerate(failures, start=1):
+            suggestion = (
+                suggestions[index - 1]
+                if index - 1 < len(suggestions)
+                else "Review the root cause and rerun the evaluation"
+            )
+            lines.append(
+                "| F{index:03d} | {failure_type} | {root_cause} | {suggestion} | Open |".format(
+                    index=index,
+                    failure_type=cell(failure.failure_type or "unknown"),
+                    root_cause=cell(self.find_root_cause(failure)),
+                    suggestion=cell(suggestion),
+                )
+            )
+        return "\n".join(lines)
 
     def generate_improvement_suggestions(
         self, failures: list[EvalResult]
@@ -800,8 +841,40 @@ class FailureAnalyzer:
         Returns:
             List of at least 3 suggestion strings (or fewer if failures is empty).
         """
-        # TODO: analyze categorized failures and return suggestions
-        raise NotImplementedError("Implement generate_improvement_suggestions")
+        if not failures:
+            return []
+
+        categories = self.categorize_failures(failures)
+        suggestions_by_type = {
+            "hallucination": "Add grounding checks and require every factual claim to be supported by retrieved context",
+            "irrelevant": "Clarify the answer prompt and strengthen question-intent detection",
+            "incomplete": "Increase context coverage or window size and add examples of complete answers",
+            "off_topic": "Add intent filtering and an explicit instruction to stay within the requested topic",
+            "refusal": "Review guardrails and add examples distinguishing answerable requests from unsafe requests",
+        }
+
+        # Address the most common failure patterns first.
+        suggestions: list[str] = []
+        for failure_type, _ in sorted(
+            categories.items(), key=lambda item: (-item[1], item[0])
+        ):
+            suggestion = suggestions_by_type.get(failure_type)
+            if suggestion is not None:
+                suggestions.append(suggestion)
+
+        # Use score-based causes as a fallback for unknown/mixed labels and to
+        # ensure a useful action list even when only one failure type occurs.
+        score_suggestions = [
+            "Improve retrieval quality and context grounding to reduce unsupported answers",
+            "Refine prompt instructions and question routing to improve answer relevance",
+            "Increase answer completeness with checklist-based generation and reference coverage",
+        ]
+        for suggestion in score_suggestions:
+            if suggestion not in suggestions:
+                suggestions.append(suggestion)
+            if len(suggestions) >= 3:
+                break
+        return suggestions
 
 
 # ---------------------------------------------------------------------------
