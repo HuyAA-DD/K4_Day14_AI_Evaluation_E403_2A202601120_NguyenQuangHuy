@@ -26,6 +26,7 @@ The reranking helper is an optional bonus exercise and may remain unimplemented.
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -394,8 +395,7 @@ class LLMJudge:
     """
 
     def __init__(self, judge_llm_fn: Callable[[str], str]) -> None:
-        # TODO: store judge_llm_fn
-        pass
+        self.judge_llm_fn = judge_llm_fn
 
     def score_response(
         self,
@@ -427,8 +427,59 @@ class LLMJudge:
                 "reasoning": str,               # raw LLM explanation
             }
         """
-        # TODO
-        raise NotImplementedError("Implement score_response")
+        rubric_text = "\n".join(
+            f"- {criterion}: {description}"
+            for criterion, description in rubric.items()
+        )
+        prompt = (
+            "You are an impartial AI response evaluator.\n"
+            "Score the answer against each rubric criterion on a scale from "
+            "0.0 to 1.0. Return valid JSON with a `scores` object containing "
+            "the criterion scores and a `reasoning` string.\n\n"
+            f"Question:\n{question}\n\n"
+            f"Answer:\n{answer}\n\n"
+            f"Rubric:\n{rubric_text}"
+        )
+
+        raw_response = self.judge_llm_fn(prompt)
+        raw_text = str(raw_response)
+
+        parsed: Any = None
+        candidates = [raw_text.strip()]
+        fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", raw_text, re.IGNORECASE | re.DOTALL)
+        if fenced:
+            candidates.insert(0, fenced.group(1).strip())
+
+        # Also tolerate a short explanation surrounding a JSON object.
+        object_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if object_match:
+            candidates.append(object_match.group(0))
+
+        for candidate in candidates:
+            try:
+                value = json.loads(candidate)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict):
+                parsed = value
+                break
+
+        parsed_scores: Any = parsed.get("scores", parsed) if isinstance(parsed, dict) else {}
+        scores: dict[str, float] = {}
+        for criterion in rubric:
+            value = parsed_scores.get(criterion) if isinstance(parsed_scores, dict) else None
+            if isinstance(value, dict):
+                value = value.get("score")
+            try:
+                score = float(value)
+            except (TypeError, ValueError):
+                score = 0.5
+            scores[criterion] = max(0.0, min(1.0, score))
+
+        return {
+            "scores": scores,
+            "reasoning": raw_text,
+        }
 
     def detect_bias(self, scores_batch: list[dict[str, Any]]) -> dict[str, Any]:
         """
@@ -449,8 +500,38 @@ class LLMJudge:
                 "severity_bias":   bool,
             }
         """
-        # TODO
-        raise NotImplementedError("Implement detect_bias")
+        response_averages: list[float] = []
+        all_scores: list[float] = []
+        for result in scores_batch:
+            raw_scores = result.get("scores", {}) if isinstance(result, dict) else {}
+            if not isinstance(raw_scores, dict):
+                continue
+            values: list[float] = []
+            for value in raw_scores.values():
+                try:
+                    score = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if 0.0 <= score <= 1.0:
+                    values.append(score)
+            if values:
+                response_averages.append(sum(values) / len(values))
+                all_scores.extend(values)
+
+        positional_bias = False
+        if len(response_averages) >= 2:
+            first_average = response_averages[0]
+            positional_bias = all(
+                first_average > later_average
+                for later_average in response_averages[1:]
+            )
+
+        average_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
+        return {
+            "positional_bias": positional_bias,
+            "leniency_bias": average_score > 0.8,
+            "severity_bias": average_score < 0.3,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -485,10 +566,22 @@ class BenchmarkRunner:
         Returns:
             List of EvalResult, one per qa_pair.
         """
-        # TODO: for each pair, call agent_fn(pair.question), then run_full_eval.
-        # Pass pair.retrieved_contexts as the optional contexts argument and
-        # preserve the original pair on the returned EvalResult.
-        raise NotImplementedError("Implement BenchmarkRunner.run")
+        results: list[EvalResult] = []
+        for pair in qa_pairs:
+            answer = agent_fn(pair.question)
+            result = evaluator.run_full_eval(
+                answer=answer,
+                question=pair.question,
+                context=pair.context,
+                expected=pair.expected_answer,
+                contexts=pair.retrieved_contexts,
+            )
+            # The evaluator creates a result from the scalar inputs; retain
+            # the dataset object so metadata and the original retrieval trace
+            # are available to downstream reporting and analysis.
+            result.qa_pair = pair
+            results.append(result)
+        return results
 
     def generate_report(self, results: list[EvalResult]) -> dict[str, Any]:
         """
@@ -510,8 +603,41 @@ class BenchmarkRunner:
         Average only non-None retrieval scores. Return None for a retrieval
         average when no result contains that metric.
         """
-        # TODO
-        raise NotImplementedError("Implement generate_report")
+        total = len(results)
+        passed = sum(1 for result in results if result.passed)
+
+        def average(values: list[float]) -> float:
+            return sum(values) / len(values) if values else 0.0
+
+        retrieval_recalls = [
+            result.context_recall
+            for result in results
+            if result.context_recall is not None
+        ]
+        retrieval_precisions = [
+            result.context_precision
+            for result in results
+            if result.context_precision is not None
+        ]
+
+        failure_types: dict[str, int] = {}
+        for result in results:
+            if result.failure_type is not None:
+                failure_types[result.failure_type] = (
+                    failure_types.get(result.failure_type, 0) + 1
+                )
+
+        return {
+            "total": total,
+            "passed": passed,
+            "pass_rate": passed / total if total else 0.0,
+            "avg_faithfulness": average([r.faithfulness for r in results]),
+            "avg_relevance": average([r.relevance for r in results]),
+            "avg_completeness": average([r.completeness for r in results]),
+            "avg_context_recall": average(retrieval_recalls) if retrieval_recalls else None,
+            "avg_context_precision": average(retrieval_precisions) if retrieval_precisions else None,
+            "failure_types": failure_types,
+        }
 
     def run_regression(self, new_results: list, baseline_results: list) -> dict:
         """Compare new evaluation results against a baseline.
@@ -535,7 +661,33 @@ class BenchmarkRunner:
 
         TODO: Compute avg per metric, compare, list regressions, set passed flag
         """
-        raise NotImplementedError
+        metric_names = ("faithfulness", "relevance", "completeness")
+
+        def averages(results: list) -> dict[str, float]:
+            if not results:
+                return {metric: 0.0 for metric in metric_names}
+            return {
+                metric: sum(getattr(result, metric) for result in results) / len(results)
+                for metric in metric_names
+            }
+
+        new_averages = averages(new_results)
+        baseline_averages = averages(baseline_results)
+        regressions = [
+            metric
+            for metric in metric_names
+            if baseline_averages[metric] - new_averages[metric] > 0.05
+        ]
+
+        return {
+            **{f"new_avg_{metric}": new_averages[metric] for metric in metric_names},
+            **{
+                f"baseline_avg_{metric}": baseline_averages[metric]
+                for metric in metric_names
+            },
+            "regressions": regressions,
+            "passed": not regressions,
+        }
 
     def identify_failures(
         self,
@@ -552,8 +704,18 @@ class BenchmarkRunner:
         Returns:
             List of failing EvalResults.
         """
-        # TODO
-        raise NotImplementedError("Implement identify_failures")
+        return [
+            result
+            for result in results
+            if any(
+                score < threshold
+                for score in (
+                    result.faithfulness,
+                    result.relevance,
+                    result.completeness,
+                )
+            )
+        ]
 
 
 # ---------------------------------------------------------------------------
